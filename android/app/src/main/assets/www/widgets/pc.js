@@ -11,9 +11,24 @@ export const HTML_PRELUDE = `<!doctype html><meta charset="utf-8"><meta name="vi
 <script>(function(){var subs={},data={};window.phonebox={data:data,
 on:function(k,f){(subs[k]=subs[k]||[]).push(f);if(data[k]!==undefined)try{f(data[k])}catch(e){console.error(e)}},
 run:function(id){parent.postMessage({phonebox:'run',id:String(id)},'*')},
-goto:function(p){parent.postMessage({phonebox:'goto',page:p},'*')}};
+goto:function(p){parent.postMessage({phonebox:'goto',page:p},'*')},
+lights:function(c){parent.postMessage({phonebox:'lights',cmd:c},'*')},
+automation:function(r){parent.postMessage({phonebox:'automation',rule:r},'*')},
+thinq:function(r){return new Promise(function(ok){var id='t'+Date.now()+Math.random().toString(36).slice(2);waits[id]=ok;parent.postMessage({phonebox:'thinq',id:id,req:r},'*')})}};
+var waits={};addEventListener('message',function(e){var m=e.data;if(!m||m.phonebox!=='thinq-done'||!waits[m.id])return;var f=waits[m.id];delete waits[m.id];f(m.res)});
 addEventListener('message',function(e){var m=e.data;if(!m||m.phonebox!=='data')return;data[m.kind]=m.value;(subs[m.kind]||[]).forEach(function(f){try{f(m.value)}catch(err){console.error(err)}})});})();<\/script>`;
 export const HTML_KINDS = ['state', 'push', 'weather', 'work', 'quotas'];
+// Bluetooth LED lights driven by the phone (MainActivity.Bridge.lights): widgets send phonebox.lights({...}) and get
+// phonebox.on('lights', fn) with the connection state, polled here while the widget is on screen.
+// LG ThinQ requests from widgets go out through the app (MainActivity.Bridge.thinq), answers come back by id.
+const thinqWaits = new Map();
+window.__thinqDone = (res) => {
+  const w = res && thinqWaits.get(res.id); if (!w) return;
+  thinqWaits.delete(res.id);
+  try { w.frame.contentWindow?.postMessage({ phonebox: 'thinq-done', id: w.id, res }, '*'); } catch (_) {}
+};
+let thinqSeq = 0;
+const lightsState = () => { try { return JSON.parse(bridge?.lightsState?.() || '{}'); } catch (_) { return {}; } };
 
 W.html = {
   needs: HTML_KINDS,
@@ -30,11 +45,33 @@ W.html = {
       if (e.source !== frame.contentWindow || !e.data) return;
       if (e.data.phonebox === 'run' && (cfg.shortcuts || []).some((s) => s.id === e.data.id)) { haptic(); api('/run/' + encodeURIComponent(e.data.id), 'POST', 5000).catch(() => toast(t('panel.pcNoAnswer'), 'err')); }
       if (e.data.phonebox === 'goto') gotoPageRef(e.data.page);
+      if (e.data.phonebox === 'automation' && bridge?.automation && e.data.rule && typeof e.data.rule === 'object') bridge.automation(JSON.stringify(e.data.rule));
+      if (e.data.phonebox === 'thinq' && e.data.req && typeof e.data.req === 'object') {
+        if (!bridge?.thinq) { try { frame.contentWindow?.postMessage({ phonebox: 'thinq-done', id: e.data.id, res: { ok: false, error: 'phone app without ThinQ' } }, '*'); } catch (_) {} return; }
+        const id = 'q' + (++thinqSeq);
+        thinqWaits.set(id, { frame, id: e.data.id });
+        bridge.thinq(JSON.stringify({ ...e.data.req, id }));
+      }
+      if (e.data.phonebox === 'lights' && bridge?.lights && e.data.cmd && typeof e.data.cmd === 'object') {
+        if (!e.data.cmd.quiet) haptic();
+        bridge.lights(JSON.stringify(e.data.cmd));
+        setTimeout(sendLights, 300);
+      }
     };
+    let lastLights = '';
+    const sendLights = () => {
+      if (!bridge?.lightsState) return;
+      const s = JSON.stringify(lightsState());
+      if (s === lastLights) return;
+      lastLights = s;
+      try { frame.contentWindow?.postMessage({ phonebox: 'data', kind: 'lights', value: JSON.parse(s) }, '*'); } catch (_) {}
+    };
+    frame.addEventListener('load', () => { lastLights = ''; sendLights(); });
+    const lightsTimer = setInterval(sendLights, 1000);
     window.addEventListener('message', onMsg);
     return {
       update(kind) { if (HTML_KINDS.includes(kind)) send(kind); },
-      destroy() { window.removeEventListener('message', onMsg); },
+      destroy() { window.removeEventListener('message', onMsg); clearInterval(lightsTimer); },
     };
   },
 };

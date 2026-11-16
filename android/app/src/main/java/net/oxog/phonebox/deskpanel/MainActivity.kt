@@ -51,6 +51,15 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var web: WebView
     private lateinit var link: AgentLink
     private lateinit var stream: AgentStream
+    private val lights by lazy { Lights(applicationContext) }
+    private val automation by lazy {
+        Automation(applicationContext, lights, thinq,
+            keepScreenOn = { on -> runOnUiThread { if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) } },
+            pcAnswers = { try { link.request("GET", "/api/push").let { it.body.close(); it.code != 503 } } catch (_: Exception) { false } })
+    }
+    private val thinq by lazy {
+        ThinQ { answer -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript("window.__thinqDone && window.__thinqDone($answer)", null) } }
+    }
     @Volatile private var volumeKeysFlipPages = true
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
     private var lastLux = -1f
@@ -69,6 +78,7 @@ class MainActivity : Activity(), SensorEventListener {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         link = AgentLink(this)
         stream = AgentStream(link) { event, data ->
+            if (event == "open") automation.pcOnline() else if (event == "close") automation.pcOffline()
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { web.evaluateJavascript(js, null) }
         }
@@ -227,9 +237,17 @@ class MainActivity : Activity(), SensorEventListener {
         super.onResume()
         web.onResume()
         stream.start()
+        automation.pcOffline()
         hideSystemUi()
         sensors?.getDefaultSensor(Sensor.TYPE_LIGHT)?.let { sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
         sensors?.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let { sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+    }
+
+    override fun onDestroy() {
+        lights.close()
+        thinq.close()
+        automation.close()
+        super.onDestroy()
     }
 
     override fun onPause() {
@@ -420,6 +438,26 @@ class MainActivity : Activity(), SensorEventListener {
 
         @JavascriptInterface
         fun version(key: String): String = if (ok(key)) packageManager.getPackageInfo(packageName, 0).versionName ?: "" else ""
+
+        /** Bluetooth LED lights driven by the phone (see Lights): a JSON command, and their connection state. */
+        @JavascriptInterface
+        fun lights(key: String, json: String) {
+            if (!ok(key)) return
+            if (!lights.hasPermission() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                runOnUiThread { requestPermissions(arrayOf(android.Manifest.permission.BLUETOOTH_CONNECT), 7) }
+            lights.command(json)
+        }
+
+        @JavascriptInterface
+        fun lightsState(key: String): String = if (ok(key)) lights.state() else "{}"
+
+        /** LG ThinQ Connect request (see ThinQ); the answer arrives later through window.__thinqDone. */
+        @JavascriptInterface
+        fun thinq(key: String, json: String) { if (ok(key)) thinq.request(json) }
+
+        /** "PC off for a while" rule from the panel (see Automation). */
+        @JavascriptInterface
+        fun automation(key: String, json: String) { if (ok(key)) automation.configure(json) }
     }
 
     companion object {
