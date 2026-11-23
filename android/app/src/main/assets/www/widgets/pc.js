@@ -14,7 +14,8 @@ run:function(id){parent.postMessage({phonebox:'run',id:String(id)},'*')},
 goto:function(p){parent.postMessage({phonebox:'goto',page:p},'*')},
 lights:function(c){parent.postMessage({phonebox:'lights',cmd:c},'*')},
 automation:function(r){parent.postMessage({phonebox:'automation',rule:r},'*')},
-thinq:function(r){return new Promise(function(ok){var id='t'+Date.now()+Math.random().toString(36).slice(2);waits[id]=ok;parent.postMessage({phonebox:'thinq',id:id,req:r},'*')})}};
+thinq:function(r){return new Promise(function(ok){var id='t'+Date.now()+Math.random().toString(36).slice(2);waits[id]=ok;parent.postMessage({phonebox:'thinq',id:id,req:r},'*')})},
+quotes:function(r){return new Promise(function(ok){var id='y'+Date.now()+Math.random().toString(36).slice(2);waits[id]=ok;parent.postMessage({phonebox:'quotes',id:id,req:r},'*')})}};
 var waits={};addEventListener('message',function(e){var m=e.data;if(!m||m.phonebox!=='thinq-done'||!waits[m.id])return;var f=waits[m.id];delete waits[m.id];f(m.res)});
 addEventListener('message',function(e){var m=e.data;if(!m||m.phonebox!=='data')return;data[m.kind]=m.value;(subs[m.kind]||[]).forEach(function(f){try{f(m.value)}catch(err){console.error(err)}})});})();<\/script>`;
 export const HTML_KINDS = ['state', 'push', 'weather', 'work', 'quotas'];
@@ -51,6 +52,13 @@ W.html = {
         const id = 'q' + (++thinqSeq);
         thinqWaits.set(id, { frame, id: e.data.id });
         bridge.thinq(JSON.stringify({ ...e.data.req, id }));
+      }
+      // real-time stock quotes (MainActivity.Bridge.quotes, Yahoo); answers come back through __thinqDone as well
+      if (e.data.phonebox === 'quotes' && e.data.req && typeof e.data.req === 'object') {
+        if (!bridge?.quotes) { try { frame.contentWindow?.postMessage({ phonebox: 'thinq-done', id: e.data.id, res: { ok: false, error: 'phone app without quotes' } }, '*'); } catch (_) {} return; }
+        const id = 'q' + (++thinqSeq);
+        thinqWaits.set(id, { frame, id: e.data.id });
+        bridge.quotes(JSON.stringify({ ...e.data.req, id }));
       }
       if (e.data.phonebox === 'lights' && bridge?.lights && e.data.cmd && typeof e.data.cmd === 'object') {
         if (!e.data.cmd.quiet) haptic();

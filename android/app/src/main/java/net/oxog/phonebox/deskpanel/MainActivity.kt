@@ -60,6 +60,9 @@ class MainActivity : Activity(), SensorEventListener {
     private val thinq by lazy {
         ThinQ { answer -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript("window.__thinqDone && window.__thinqDone($answer)", null) } }
     }
+    private val quotes by lazy {
+        Quotes { answer -> runOnUiThread { if (::web.isInitialized) web.evaluateJavascript("window.__thinqDone && window.__thinqDone($answer)", null) } }
+    }
     @Volatile private var volumeKeysFlipPages = true
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
     private var lastLux = -1f
@@ -246,6 +249,7 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onDestroy() {
         lights.close()
         thinq.close()
+        quotes.close()
         automation.close()
         super.onDestroy()
     }
@@ -454,6 +458,10 @@ class MainActivity : Activity(), SensorEventListener {
         /** LG ThinQ Connect request (see ThinQ); the answer arrives later through window.__thinqDone. */
         @JavascriptInterface
         fun thinq(key: String, json: String) { if (ok(key)) thinq.request(json) }
+
+        /** Real-time stock quotes for the watchlist (see Quotes); the answer arrives through window.__thinqDone too. */
+        @JavascriptInterface
+        fun quotes(key: String, json: String) { if (ok(key)) quotes.request(json) }
 
         /** "PC off for a while" rule from the panel (see Automation). */
         @JavascriptInterface
